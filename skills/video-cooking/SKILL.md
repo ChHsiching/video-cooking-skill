@@ -54,11 +54,11 @@ If `cook download` fails (auth wall it couldn't crack, network, etc.), stop and 
 
 Pass the `<output-root>` and `<name>` from Step 1, **plus the publish intent from Step 0**. Tell `video-subtitle` explicitly:
 
-> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment: cooked mp4, upload.md with per-platform titles/descriptions/chapters, cloud-srt/ for soft-sub platforms, cooked/cover.jpg. Don't skip cloud-srt or cover — the user is going to upload."
+> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment: cooked mp4, upload.md with per-platform titles/descriptions/chapters, cloud-srt/ for soft-sub platforms, cooked/cover.jpg. Don't skip cloud-srt or cover — the user is going to upload. The source context at `raw/<name>.source.json` (run `cook show-source` to surface it) has the author, links, and source description — use it for translation context and upload metadata, don't just rely on the transcript."
 
-Without this, `video-subtitle` might treat cloud-srt/ as lazy or forget cover.jpg. The intent handoff is what makes the router produce a publish-ready shipment every time.
+Without this, `video-subtitle` might treat cloud-srt/ as lazy, forget cover.jpg, or translate purely from the transcript and miss the author/links/description the source platform already provided. The intent handoff is what makes the router produce a publish-ready shipment every time.
 
-`video-subtitle` (via cook) runs end to end: extract audio → transcribe → translate → subtitles → burn → upload.md → cover → README.
+`video-subtitle` (via cook) runs end to end: extract audio → transcribe → translate (with source context) → subtitles → burn → upload.md (with source context) → cover → README.
 
 Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages). This is the router's final gate — the run is not done until every file in the shipment exists and the duration cross-checks pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
 
