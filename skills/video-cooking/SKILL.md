@@ -58,7 +58,7 @@ Pass the `<output-root>` and `<name>` from Step 1, **plus the publish intent fro
 
 Without this, `video-subtitle` might treat cloud-srt/ as lazy, forget cover.jpg, or translate purely from the transcript and miss the author/links/description the source platform already provided. The intent handoff is what makes the router produce a publish-ready shipment every time.
 
-`video-subtitle` (via cook) runs end to end: extract audio → transcribe → translate (with source context) → subtitles → burn → upload.md (with source context) → cover → README.
+`video-subtitle` (via cook) runs end to end: extract audio → transcribe → **audit ASR proper nouns** → translate (with source context) → subtitles → burn → upload.md (with source context) → cover → README.
 
 Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages). This is the router's final gate — the run is not done until every file in the shipment exists and the duration cross-checks pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
 
