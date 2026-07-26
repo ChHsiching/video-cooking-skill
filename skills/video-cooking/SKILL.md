@@ -33,6 +33,20 @@ The optional Step 3 (Chinese dub) needs an additional skill:
 
 Plus the [`cook`](https://github.com/ChHsiching/video-cook) CLI (`pip install video-cook[all]`), which both downstream skills use as their deterministic executor. If any are missing, stop and tell the user which to install.
 
+**Check cook's version before starting the pipeline.** Run `cook --version` from the shared venv (the one `video-subtitle`'s Step 0 establishes, or whichever Python `cook` resolves to). Compare against the minimum each stage needs:
+
+- Stages 1–2 (download + subtitle): cook ≥ 0.1.0 — any released version works.
+- Stage 3 (dub, optional): cook ≥ 0.2.0 — the `cook dub` subcommand was added in 0.2.0. Only enforce this when the user asked for the Chinese dub.
+
+If the installed cook is older than the minimum, stop and tell the user the exact upgrade command for their venv:
+
+```bash
+<shared-venv>/Scripts/python -m pip install -U video-cook      # Windows
+<shared-venv>/bin/python -m pip install -U video-cook           # macOS/Linux
+```
+
+Do not continue until `cook --version` reports a version ≥ the minimum. Running an older cook into a stage that needs a newer one fails with a confusing "unknown subcommand" error — the version check up front is cheaper than debugging that.
+
 ## The pipeline
 
 ### Step 0 — Capture publish intent
