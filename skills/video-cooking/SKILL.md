@@ -22,7 +22,7 @@ Reach for the individual skills instead when:
 
 ## Prerequisites
 
-Both core downstream skills must be installed:
+Both downstream skills must be installed:
 
 - `video-download` (`npx skills add ChHsiching/video-download-skill`)
 - `video-subtitle` (`npx skills add ChHsiching/video-subtitle-skill`)
@@ -31,7 +31,7 @@ The optional Step 3 (Chinese dub) needs an additional skill:
 
 - `video-dubbing` (`npx skills add ChHsiching/video-dubbing-skill`) — only required if the user wants the Chinese-dubbed release. Skip the install check if Step 0's "Chinese dub?" answer is no.
 
-Plus the [`cook`](https://github.com/ChHsiching/video-cook) CLI (`pip install video-cook[all]`), which all downstream skills use as their deterministic executor. If any are missing, stop and tell the user which to install.
+Plus the [`cook`](https://github.com/ChHsiching/video-cook) CLI (`pip install video-cook[all]`), which both downstream skills use as their deterministic executor. If any are missing, stop and tell the user which to install.
 
 ## The pipeline
 
@@ -49,7 +49,7 @@ Record the answers. Pass them to Step 2.
 
 ### Step 1 — Invoke `video-download`
 
-Hand it the URL plus any overrides from Step 0 (`--author`, `--name`). If the user said "1080p is fine" / "skip 4K", pass `--quality 1080`. `video-download` (via `cook download`) reports `<output-root>` and `<name>` when done — the path to its `raw/` directory and the shared filename stem. **Capture both values**; they are the handoff to Step 2.
+Hand it the URL plus any overrides from Step 0 (`--author`, `--name`). `video-download` (via `cook download`) reports `<output-root>` and `<name>` when done — the path to its `raw/` directory and the shared filename stem. **Capture both values**; they are the handoff to Step 2.
 
 Done when `video-download` reports done **and** `cook verify-shipment <output-root> <name> --stage raw` exits 0. The stage check is the router's independent gate — don't just trust the downstream's "done", verify the raw/ shipment (mp4 + source.json + jpg) is actually present.
 
@@ -57,13 +57,15 @@ If `cook download` fails (auth wall it couldn't crack, network, etc.), stop and 
 
 ### Step 2 — Invoke `video-subtitle`
 
-Pass the `<output-root>` and `<name>` from Step 1, **plus the publish intent from Step 0**. Tell `video-subtitle`:
+Pass the `<output-root>` and `<name>` from Step 1, **plus the publish intent from Step 0**. Tell `video-subtitle` explicitly:
 
-> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment."
+> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment: cooked mp4, upload.md with per-platform titles/descriptions/chapters, cloud-srt/ for soft-sub platforms, cooked/cover.jpg. Don't skip cloud-srt or cover — the user is going to upload. The source context at `raw/<name>.source.json` (run `cook show-source` to surface it) has the author, links, and source description — use it for translation context and upload metadata, don't just rely on the transcript."
 
-`video-subtitle` (via cook) produces the full shipment end to end — its own completion criterion guarantees cooked mp4, upload.md, cloud-srt/, cover.jpg, and README are all present.
+Without this, `video-subtitle` might treat cloud-srt/ as lazy, forget cover.jpg, or translate purely from the transcript and miss the author/links/description the source platform already provided. The intent handoff is what makes the router produce a publish-ready shipment every time.
 
-Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages). This is the router's gate — the run is not done until every file in the shipment exists and the duration cross-checks pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
+`video-subtitle` (via cook) runs end to end: extract audio → transcribe → **audit ASR proper nouns** → translate (with source context) → subtitles → burn → upload.md (with source context) → cover → README.
+
+Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages). This is the router's final gate — the run is not done until every file in the shipment exists and the duration cross-checks pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
 
 ### Step 3 — Invoke `video-dubbing` (optional, produces the Chinese-dubbed release)
 
@@ -95,8 +97,20 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 - During transcription: pre-read the partial transcript, draft upload.md titles/description
 - During burning: write the README (you know the file layout by then)
 
-Poll logs periodically and fill the wait with the authoring work above.
+Don't sit idle waiting for detached jobs — poll the log periodically and fill the wait with authoring work.
 
-## Defaults
+## Defaults (don't over-ask)
 
-Step 0 captures the publish intent with sensible defaults — only the output-path confirmation is mandatory (it sets the `<name>` stem every downstream file inherits). The other knobs (platforms, subtitle language, subtitle placement, Chinese dub, quality) have working defaults; let the user override only if they speak up.
+The pipeline has sensible defaults. Only interrupt the user when you have reason to believe they want to deviate:
+
+| Decision | Default | When to ask |
+|---|---|---|
+| Platforms | all (B站 + 小红书 + YouTube + archive) | User said "just for X" |
+| Subtitle language | bilingual (中英) | User asked for single-language |
+| Subtitle placement | overlay | Video is clearly IDE/terminal/UI demo → suggest bottom-bar |
+| Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
+| Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
+| Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
+| Chinese dub | off | User said "连中配一起做" / "with Chinese dub" → run Step 3 |
+
+The path confirmation is the only one that's not optional — it sets the `<name>` stem that every downstream file inherits. Everything else has a working default; let the user override only if they speak up.
