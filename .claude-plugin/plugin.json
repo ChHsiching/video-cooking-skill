@@ -1,6 +1,6 @@
 {
   "name": "video-cooking-skill",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "skills": [
     "./skills/video-cooking"
   ]
