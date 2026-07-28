@@ -89,9 +89,9 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 > "The bilingual cooked video is done. Produce the Chinese dub for upload to `<platforms from Step 0>` alongside the bilingual release."
 
-`video-dubbing` reads `raw/<name>.raw.mp4` (original audio, for Demucs separation + voice cloning reference) and `transcript/<name>.zh.srt` (the dub script with timestamps), and writes its outputs to a new `dubbed/` stage folder. It does not modify anything `video-subtitle` produced.
+`video-dubbing` reads `raw/<name>.raw.mp4` (original audio, for Demucs separation + voice cloning reference) and `transcript/<name>.en.full.srt` (the full-sentence English transcript — it translates this into a dub script itself, since dubbing needs complete sentences not subtitle fragments), and writes its outputs to a new `dubbed/` stage folder plus `cooked/<name>.dubbed.mp4`. It does not modify anything `video-subtitle` produced.
 
-Done when `video-dubbing` reports done **and** `cook dub verify <output-root> <name>` exits 0. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable. Surface any `alignment-issues.md` cues to the user so they can decide whether to re-translate those cues shorter.
+Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
 
 ## Time budget
 
@@ -105,7 +105,7 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (optional Step 3) | ~4–8 hrs on CPU | VoxCPM2 near-realtime per cue but hundreds of cues; Demucs separation ~45 min for a 30-min video. **Runs detached overnight.** GPU cuts this dramatically but isn't required. |
+| Dub (optional Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs detached overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
 **Parallelism:** transcription and burning both run detached (cook handles this). While they run, the agent can:
 - During transcription: pre-read the partial transcript, draft upload.md titles/description
