@@ -33,19 +33,28 @@ The optional Step 3 (Chinese dub) needs an additional skill:
 
 Plus the [`cook`](https://github.com/ChHsiching/video-cook) CLI (`pip install video-cook[all]`), which both downstream skills use as their deterministic executor. If any are missing, stop and tell the user which to install.
 
-**Check and upgrade cook before starting the pipeline.** This is the agent's job, not the user's — the user never has to think about cook's version. Resolve the shared venv the same way `video-subtitle`'s Step 0 does (`VIDEO_TOOLS_VENV` env var → `~/.venvs/video-tools/` → system Python), then run `cook --version` from it. Compare against the minimum each stage needs:
+**Check and upgrade cook before starting the pipeline.** This is the agent's job, not the user's — the user never has to think about cook's version.
 
-- Stages 1–2 (download + subtitle): cook ≥ 0.1.0 — any released version works.
-- Stage 3 (dub, optional): cook ≥ 0.2.0 — the `cook dub` subcommand was added in 0.2.0. Only enforce this when the user asked for the Chinese dub.
-
-If the installed cook is older than the minimum (or missing entirely), **upgrade it yourself** by running the venv's pip directly — do not stop and ask the user to do it:
+**Always run the upgrade first** (idempotent — `pip install -U` is a no-op if already latest):
 
 ```bash
 <shared-venv>/Scripts/python -m pip install -U video-cook      # Windows
 <shared-venv>/bin/python -m pip install -U video-cook           # macOS/Linux
 ```
 
-After the upgrade finishes, re-run `cook --version` to confirm it now reports ≥ the minimum. Only then proceed to Step 0. Running an older cook into a stage that needs a newer one fails with a confusing "unknown subcommand" error — upgrading up front is cheaper than debugging that mid-pipeline.
+Then **probe for the subcommands this run actually needs** — a version number is the wrong check (it couples the skill to cook's release schedule and goes stale every release). The right check is "does the command parse":
+
+```bash
+<venv>/Scripts/cook dub synth --help        # fails on cook < 0.3.0
+```
+
+For each stage the run will invoke, run its `--help` and read the exit code:
+- Stages 1–2 (download + subtitle): `cook transcribe --help`, `cook subtitles --help`
+- Stage 3 (dub, only if the user asked for Chinese dub): `cook dub synth --help`, `cook dub retime --help`
+
+If any probe fails (exit non-zero, "invalid choice", or "unknown subcommand"), the upgrade didn't take — re-run the `pip install -U`, and if it still fails, surface the actual error to the user (network, permissions, PyPI outage). Only proceed when every probe passes.
+
+This decouples the skill from cook's version numbering: a new cook release adds a subcommand, the skill's probe starts passing, no skill edit needed.
 
 ## The pipeline
 
