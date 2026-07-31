@@ -64,7 +64,7 @@ The user typed `/video-cooking` because they want to publish. Capture the intent
 
 - **Which platforms?** Default: **all** (B站 + 小红书 + YouTube + archive). Only ask if you have reason to believe they want a subset (e.g. they said "just for B站").
 - **Subtitle language output?** Default: **bilingual** (中英). Only ask if they want single-language.
-- **Subtitle placement?** Default: **overlay**. Consider proactively suggesting **bottom-bar** when the video is clearly an IDE/terminal/UI demo (dense visual content that overlay subtitles would cover) — but don't ask unless it matters.
+- **Subtitle placement?** Default: **bottom-bar**. Most technical content (IDE/terminal/UI demos, diagrams, dense slides) has on-screen material the subtitles would otherwise cover; bottom-bar pads a black strip below the frame so nothing is obscured. Only switch to **overlay** when the lower frame is genuinely empty (centered talking head, slides with a wide bottom margin) — and even then, bottom-bar is a safe default.
 - **Chinese dub?** Default: **no** (the bilingual subtitled release is the primary product). Set to **yes** only if the user said "连中配一起做" / "with Chinese dub" / "也做中配版本" — this triggers the optional Step 3 (`video-dubbing`), which clones the original speaker's voice and produces a second release with Chinese voiceover. Default-off because Step 3 is slow on CPU (hours for a 30-min video) and not always wanted.
 - **Output paths?** Default: derive from source metadata (`<cwd>/<author>/<video-name>/`, `<name>` = `<video-name>`). Confirm with the user before download starts — these set the filename stem for every downstream artifact. **Confirm once here; do not re-ask downstream** — both `video-download` and `video-subtitle` would otherwise ask again.
 
@@ -98,7 +98,17 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 > "The bilingual cooked video is done. Produce the Chinese dub for upload to `<platforms from Step 0>` alongside the bilingual release."
 
-`video-dubbing` reads `raw/<name>.raw.mp4` (original audio, for Demucs separation + voice cloning reference) and `transcript/<name>.en.full.srt` (the full-sentence English transcript — it translates this into a dub script itself, since dubbing needs complete sentences not subtitle fragments), and writes its outputs to a new `dubbed/` stage folder plus `cooked/<name>.dubbed.mp4`. It does not modify anything `video-subtitle` produced.
+`video-dubbing` reads `raw/<name>.raw.mp4` (original audio, for Demucs separation + voice cloning reference) and `transcript/<name>.en.full.srt` (the full-sentence English transcript — produce it in Step 2 via `scripts/make_full_srt.py`; dubbing needs complete sentences not subtitle fragments), and writes its outputs to a new `dubbed/` stage folder plus `cooked/<name>.dubbed.mp4`. It does not modify anything `video-subtitle` produced.
+
+**The `--python` flag is mandatory when IndexTTS2 lives in a separate venv** (the common case — its heavy deps like torch are isolated from cook's own Python). cook runs each dub stage as a subprocess under that interpreter, so `from indextts import ...` resolves. Resolve the venv once (default `~/Git/index-tts/.venv`) and pass it to every dub command:
+
+```
+<venv>/Scripts/cook dub separate <root> <name> --python <indextts-venv>/Scripts/python.exe
+<venv>/Scripts/cook dub synth    <root> <name> --python <indextts-venv>/Scripts/python.exe
+...
+# or all four stages at once:
+<venv>/Scripts/cook dub full <root> <name> --python <indextts-venv>/Scripts/python.exe
+```
 
 Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
 
@@ -114,13 +124,15 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (optional Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs detached overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
+| Dub (optional Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
-**Parallelism:** transcription and burning both run detached (cook handles this). While they run, the agent can:
+**Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/retime) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
+
+While long tasks run, the agent can:
 - During transcription: pre-read the partial transcript, draft upload.md titles/description
 - During burning: write the README (you know the file layout by then)
 
-Don't sit idle waiting for detached jobs — poll the log periodically and fill the wait with authoring work.
+Don't sit idle waiting — fill the wait with authoring work.
 
 ## Defaults (don't over-ask)
 
@@ -130,7 +142,7 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 |---|---|---|
 | Platforms | all (B站 + 小红书 + YouTube + archive) | User said "just for X" |
 | Subtitle language | bilingual (中英) | User asked for single-language |
-| Subtitle placement | overlay | Video is clearly IDE/terminal/UI demo → suggest bottom-bar |
+| Subtitle placement | bottom-bar | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay |
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
