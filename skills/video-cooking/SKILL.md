@@ -66,7 +66,7 @@ The user typed `/video-cooking` because they want to publish. Capture the intent
 
 - **Which platforms?** Default: **all** (B站 + 小红书 + YouTube + archive). Only ask if you have reason to believe they want a subset (e.g. they said "just for B站").
 - **Subtitle language output?** Default: **bilingual** (中英). Only ask if they want single-language.
-- **Subtitle placement?** Default: **bottom-bar**. Most technical content (IDE/terminal/UI demos, diagrams, dense slides) has on-screen material the subtitles would otherwise cover; bottom-bar pads a black strip below the frame so nothing is obscured. Only switch to **overlay** when the lower frame is genuinely empty (centered talking head, slides with a wide bottom margin) — and even then, bottom-bar is a safe default.
+- **Subtitle placement?** Default: **bottom-bar**. Most technical content (IDE/terminal/UI demos, diagrams, dense slides) has on-screen material the subtitles would otherwise cover; bottom-bar pads a black strip below the frame so nothing is obscured. Only switch to **overlay** when the lower frame is genuinely empty (centered talking head, slides with a wide bottom margin) — and even then, bottom-bar is a safe default. **Bar height is adjustable** — surface the `--bar-px` knob (see Defaults table) when confirming placement if the source has tall content in its lower third that the default bar would clip.
 - **Chinese dub?** Default: **no** (the bilingual subtitled release is the primary product). Set to **yes** only if the user said "连中配一起做" / "with Chinese dub" / "也做中配版本" — this triggers the optional Step 3 (`video-dubbing`), which clones the original speaker's voice and produces a second release with Chinese voiceover. Default-off because Step 3 is slow on CPU (hours for a 30-min video) and not always wanted.
 - **Output paths?** Default: derive from source metadata (`<cwd>/<author>/<video-name>/`, `<name>` = `<video-name>`). Confirm with the user before download starts — these set the filename stem for every downstream artifact. **Confirm once here; do not re-ask downstream** — both `video-download` and `video-subtitle` would otherwise ask again.
 
@@ -122,6 +122,8 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 6. **retime** — re-times the video to the new audio timeline. (tool) **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
 7. **burn** — burns the Chinese subtitles into the re-timed video. (tool)
 
+**Dub subtitle style is independent of the bilingual release.** The burn in stage 7 uses its own subtitle style (shorter bar, smaller font) tuned for the Chinese-only dub — it does **not** inherit the bilingual styling from Step 2. Treat any style difference between `cooked/<name>.mp4` and `cooked/<name>.dubbed.mp4` as expected: do not "fix" a benign difference, and do not copy the bilingual style settings into the dub burn.
+
 Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
 
 ## Time budget
@@ -154,7 +156,7 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 |---|---|---|
 | Platforms | all (B站 + 小红书 + YouTube + archive) | User said "just for X" |
 | Subtitle language | bilingual (中英) | User asked for single-language |
-| Subtitle placement | bottom-bar | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay |
+| Subtitle placement | bottom-bar (`--bar-px` default 220 on `cook subtitles` / `cook burn`) | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay. Source has tall lower-third content the default 220 bar would clip → raise `--bar-px` |
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
