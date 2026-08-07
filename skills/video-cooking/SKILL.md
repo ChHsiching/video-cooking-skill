@@ -90,7 +90,11 @@ Without this, `video-subtitle` might treat cloud-srt/ as lazy, forget cover.jpg,
 
 `video-subtitle` (via cook) runs end to end: extract audio → transcribe → **audit ASR proper nouns** → translate (with source context) → subtitles → burn → upload.md (with source context) → cover → README.
 
-Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages). This is the router's final gate — the run is not done until every file in the shipment exists and the duration cross-checks pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
+**Gate A — full-cue review of the cleaned English transcript.** Once the ASR audit has corrected the English transcript and before translate-from-clean-source begins, spawn a **fresh subagent** (not the router agent) to run a full-cue review against the audited English SRT. See [Full-cue review gates](#full-cue-review-gates) for the reviewer contract. Translate does not start until Gate A clears — translation quality is bounded by source quality, so the cleaned English must be confirmed correct end to end first.
+
+Done when `video-subtitle` reports done **and** `cook verify-shipment <output-root> <name>` exits 0 (full shipment, all stages) **and Gate B clears**. `cook verify-shipment` runs first — it catches missing files and wrong durations. Gate B (below) runs second — it catches wrong content. The run is not done until both pass. If `cook verify-shipment` reports missing files, surface them and go back to the relevant step.
+
+**Gate B — full-cue review of the burned bilingual video.** After the bilingual cooked video is burned and `cook verify-shipment` exits 0, spawn a **fresh subagent** to run a full-cue review against the burned bilingual subtitles (every cue, both languages). See [Full-cue review gates](#full-cue-review-gates). Step 2 is not done until Gate B clears.
 
 ### Step 3 — Invoke `video-dubbing` (optional, produces the Chinese-dubbed release)
 
@@ -124,7 +128,26 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 **Dub subtitle style is independent of the bilingual release.** The burn in stage 7 uses its own subtitle style (shorter bar, smaller font) tuned for the Chinese-only dub — it does **not** inherit the bilingual styling from Step 2. Treat any style difference between `cooked/<name>.mp4` and `cooked/<name>.dubbed.mp4` as expected: do not "fix" a benign difference, and do not copy the bilingual style settings into the dub burn.
 
-Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
+**Gate C — full-cue review of the burned dubbed video.** After the dub burn completes, spawn a **fresh subagent** to run a full-cue review against the burned Chinese subtitles on `cooked/<name>.dubbed.mp4`. See [Full-cue review gates](#full-cue-review-gates). Step 3 is not done until Gate C clears.
+
+Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end **and Gate C clears**. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
+
+## Full-cue review gates
+
+Three points in the pipeline seal human-readable content — the ASR-audited English transcript (Gate A), the burned bilingual video (Gate B), and the burned dubbed video (Gate C). Each is gated by a **fresh-subagent full-cue review** that runs in addition to the existence-and-duration check (`cook verify-shipment` or the file-exists check). The existence check runs first and catches missing files / wrong durations; the review gate runs second and catches wrong content. The stage is not done until both pass.
+
+**Reviewer contract (same for all three gates):**
+
+- **Fresh subagent, not the router agent.** The router agent is anchored on the work it just produced. Spawn a new subagent for the review so the read is independent.
+- **Read every cue end to end.** Read the whole SRT/ASS, in order, in context. The review principle is "read every proper noun in context and confirm it via web search" — **not** "search for a memorized list of known error signatures." Pattern-matching known errors misses novel ones; reading every line in context catches them.
+- **What to flag:**
+  - **Split words across cues** — a word broken at a cue boundary that should be one token.
+  - **Adjacent duplicate lines** — the same cue repeated back-to-back.
+  - **ASR errors in proper nouns** — names, places, brands, libraries, commands the transcription got wrong. For every proper noun you cannot confirm from context, web-search it and confirm before passing.
+  - **Missing translation lines** (Gates B and C only) — cues with English but no Chinese (Gate B) or no Chinese audio / subtitle (Gate C).
+- **Fail loop.** On any defect found, the router fixes every listed defect, then **re-runs the same gate** (fresh subagent, full re-read) — not a spot-check of just the fixed lines. The stage is not done until a full review pass finds zero defects.
+
+These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
 
 ## Time budget
 
