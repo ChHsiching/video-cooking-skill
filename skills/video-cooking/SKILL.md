@@ -56,6 +56,8 @@ If any probe fails (exit non-zero, "invalid choice", or "unknown subcommand"), t
 
 This decouples the skill from cook's version numbering: a new cook release adds a subcommand, the skill's probe starts passing, no skill edit needed.
 
+**YouTube download runtime.** Before `cook download` on a YouTube source, verify the download runtime is in place — YouTube's signature challenge needs a JS runtime and the yt-dlp extractor extras, both separate from cook itself. If `cook download` fails with either `n challenge solving failed` (signature challenge could not be solved) or `Only images available` (no video stream selected — the extractor fell back to thumbnails), treat it as a missing-runtime condition, not a source problem. Recover yourself, before surfacing anything to the user: install the default-extras downloader build (`pip install -U "yt-dlp[default]"`, which pulls `yt-dlp-ejs` and the YouTube extractor's other deps), confirm a JS runtime is present at Node ≥ 22, then re-run the download with `--js-runtimes node` so yt-dlp uses Node for the challenge. Setting up the deterministic backend is the agent's job, same convention as the cook upgrade above — the user should never have to think about yt-dlp's extractor deps.
+
 ## The pipeline
 
 ### Step 0 — Capture publish intent
