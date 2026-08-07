@@ -112,6 +112,16 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 <venv>/Scripts/cook dub full <root> <name> --python <indextts-venv>/Scripts/python.exe
 ```
 
+**Dub pipeline stage order** (run in this sequence; six are deterministic-tool stages under the IndexTTS2 venv, one is agent-owned):
+
+1. **separate** — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment. (tool)
+2. **extract_reference** — pulls a voice-cloning reference clip from the separated vocals. (tool)
+3. **translate** — produce the dub translation file (`<name>.translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. **Agent-owned** — this is your work, not cook's. Produce the file before invoking synth.
+4. **synth** — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice. (tool)
+5. **timeline** — builds a string-of-pearls timeline placing each synthesized cue back-to-back. (tool)
+6. **retime** — re-times the video to the new audio timeline. (tool) **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
+7. **burn** — burns the Chinese subtitles into the re-timed video. (tool)
+
 Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
 
 ## Time budget
