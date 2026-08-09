@@ -72,7 +72,20 @@ The user typed `/video-cooking` because they want to publish. Capture the intent
 
 Record the answers. Pass them to Step 2.
 
-### Step 1 — Invoke `video-download`
+### Step 1 — Invoke `video-download` (or stage the raw/ from a local file)
+
+**If the user already has the video file**, skip `cook download` and stage the `raw/` directory yourself — the pipeline downstream reads `raw/<name>.raw.mp4` + `raw/<name>.source.json` + `raw/<name>.jpg`, and these normally come from download. Build them by hand:
+
+1. **Pick `<name>`** — a slugified stem (e.g. `AI Skills for Real Engineering Teams.mp4` → `ai-skills-for-real-engineering-teams`). This stem propagates to every downstream file; choose it once and use it everywhere. Spaces in filenames break cook's path handling.
+2. **Create the directory layout**: `<output-root>/raw/`, `transcript/`, `subtitle/`, `cloud-srt/`, `cooked/`, `scripts/`.
+3. **Copy the video** to `raw/<name>.raw.mp4`.
+4. **Write `raw/<name>.source.json`** — fetch the source page (the URL the user gave) and extract at minimum: `title`, `uploader`, `channel`, `uploader_url`, `webpage_url`, `duration`, `description`, `tags`. The description is the richest source — it often contains the topic outline, chapter titles, and mentioned tools/people that downstream translation and upload.md both need. Don't skip this; `cook show-source` reads it for translation context and upload metadata.
+5. **Extract `raw/<name>.jpg`** — grab the source page's video poster (preferred — it's the author's chosen thumbnail; check the `<video>` element's `poster` attribute, or the page's og:image). The poster is usually at `image.mux.com/.../thumbnail.jpg?time=N` (Mux-hosted) or a CDN URL. If no poster is found, fall back to `ffmpeg -ss 3 -i raw/<name>.raw.mp4 -frames:v 1` (skip t=0 — first frames are often mid-blink or not yet settled). For JS-rendered pages where `curl` returns empty, use a real-browser fetcher to read the rendered DOM.
+6. **Verify**: `cook verify-shipment <output-root> <name> --stage raw` must exit 0 before proceeding. If it reports missing files, the staging is incomplete.
+
+When staging is done, skip to Step 2 with `<output-root>` and `<name>` in hand.
+
+**If the user gave a URL (no local file)**, invoke `video-download`:
 
 Hand it the URL plus any overrides from Step 0 (`--author`, `--name`). `video-download` (via `cook download`) reports `<output-root>` and `<name>` when done — the path to its `raw/` directory and the shared filename stem. **Capture both values**; they are the handoff to Step 2.
 
@@ -145,6 +158,7 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
   - **Adjacent duplicate lines** — the same cue repeated back-to-back.
   - **ASR errors in proper nouns** — names, places, brands, libraries, commands the transcription got wrong. For every proper noun you cannot confirm from context, web-search it and confirm before passing.
   - **Missing translation lines** (Gates B and C only) — cues with English but no Chinese (Gate B) or no Chinese audio / subtitle (Gate C).
+  - **Biliteral merge bleed** (Gate B only) — a cue whose text repeats the previous cue's content. The `cook subtitles` biliteral merge uses timestamp-union to reconcile mismatched EN/ZH cue counts; when one language's cue spans two of the other's, the spanning text can carry into the next cue. This is a merge artifact, not a translation error — fix it in the bilingual SRT and both ASS files, then re-burn.
 - **Fail loop.** On any defect found, the router fixes every listed defect, then **re-runs the same gate** (fresh subagent, full re-read) — not a spot-check of just the fixed lines. The stage is not done until a full review pass finds zero defects.
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
