@@ -56,7 +56,9 @@ If any probe fails (exit non-zero, "invalid choice", or "unknown subcommand"), t
 
 This decouples the skill from cook's version numbering: a new cook release adds a subcommand, the skill's probe starts passing, no skill edit needed.
 
-**YouTube download runtime.** Before `cook download` on a YouTube source, verify the download runtime is in place — YouTube's signature challenge needs a JS runtime and the yt-dlp extractor extras, both separate from cook itself. If `cook download` fails with either `n challenge solving failed` (signature challenge could not be solved) or `Only images available` (no video stream selected — the extractor fell back to thumbnails), treat it as a missing-runtime condition, not a source problem. Recover yourself, before surfacing anything to the user: install the default-extras downloader build (`pip install -U "yt-dlp[default]"`, which pulls `yt-dlp-ejs` and the YouTube extractor's other deps), confirm a JS runtime is present at Node ≥ 22, then re-run the download with `--js-runtimes node` so yt-dlp uses Node for the challenge. Setting up the deterministic backend is the agent's job, same convention as the cook upgrade above — the user should never have to think about yt-dlp's extractor deps.
+**System tools (not pip-installable).** cook shells out to two system binaries it cannot install itself: **ffmpeg** (extract / burn / download's stream-merge + ffprobe verify) and **Node ≥ 22** (YouTube's signature challenge — cook hard-codes the Node runtime for yt-dlp, so Node must be on PATH before any YouTube download). Run `cook doctor` first: it reports both and is the single check for the whole environment. If either is missing, install it (Windows: `winget install ffmpeg` + a Node LTS installer, or static builds on PATH; macOS: `brew install ffmpeg node`; Linux: distro packages) before starting — `cook download` / `cook extract` / `cook burn` will otherwise die with a clean "ffmpeg not found" message rather than proceed.
+
+**YouTube signature-challenge recovery.** If `cook download` fails with `n challenge solving failed` or `Only images available` (the extractor fell back to thumbnails), that is a missing-runtime condition, not a source problem. Recover yourself before surfacing it: `cook doctor` (confirm Node is present), then `pip install -U "yt-dlp[default]"` in the cook venv (pulls `yt-dlp-ejs` and the YouTube extractor's deps), then re-run `cook download` — cook already wires yt-dlp to use Node for the challenge. Setting up the deterministic backend is the agent's job, same convention as the cook upgrade above.
 
 ## The pipeline
 
@@ -128,15 +130,15 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 <venv>/Scripts/cook dub full <root> <name> --python <indextts-venv>/Scripts/python.exe
 ```
 
-**Dub pipeline stage order** (run in this sequence; six are deterministic-tool stages under the IndexTTS2 venv, one is agent-owned):
+**Dub pipeline stage order** (run in this sequence). Five are `cook dub` stages run under the IndexTTS2 venv; two are agent-owned steps (`extract_reference` runs a skill script directly, `translate` is pure authoring). For the exact commands and the quality gate on the dub translation, follow `video-dubbing`'s SKILL.md Step 1–3 — it owns those details:
 
-1. **separate** — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment. (tool)
-2. **extract_reference** — pulls a voice-cloning reference clip from the separated vocals. (tool)
-3. **translate** — produce the dub translation file (`<name>.translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. **Agent-owned** — this is your work, not cook's. Produce the file before invoking synth.
-4. **synth** — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice. (tool)
-5. **timeline** — builds a string-of-pearls timeline placing each synthesized cue back-to-back. (tool)
-6. **retime** — re-times the video to the new audio timeline. (tool) **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
-7. **burn** — burns the Chinese subtitles into the re-timed video. (tool)
+1. **separate** (`cook dub separate`) — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment.
+2. **extract_reference** (agent-owned) — runs the dubbing skill's `extract_reference.py` against the separated vocals to pull a voice-cloning reference clip. Not a `cook dub` command.
+3. **translate** (agent-owned) — produce the dub translation file (`<name>.translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
+4. **synth** (`cook dub synth`) — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice.
+5. **timeline** (`cook dub timeline`) — builds a string-of-pearls timeline placing each synthesized cue back-to-back.
+6. **retime** (`cook dub retime`) — re-times the video to the new audio timeline. **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
+7. **burn** (`cook dub burn`) — burns the Chinese subtitles into the re-timed video.
 
 **Dub subtitle style is independent of the bilingual release.** The burn in stage 7 uses its own subtitle style (shorter bar, smaller font) tuned for the Chinese-only dub — it does **not** inherit the bilingual styling from Step 2. Treat any style difference between `cooked/<name>.mp4` and `cooked/<name>.dubbed.mp4` as expected: do not "fix" a benign difference, and do not copy the bilingual style settings into the dub burn.
 
@@ -157,7 +159,7 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
   - **Adjacent duplicate lines** — the same cue repeated back-to-back.
   - **ASR errors in proper nouns** — names, places, brands, libraries, commands the transcription got wrong. For every proper noun you cannot confirm from context, web-search it and confirm before passing.
   - **Missing translation lines** (Gates B and C only) — cues with English but no Chinese (Gate B) or no Chinese audio / subtitle (Gate C).
-  - **Merge bleed** (Gate B only) — a cue whose text repeats the previous cue's content. This is a biliteral-merge artifact (not a translation error) — fix it in the bilingual SRT and both ASS files, then re-burn.
+  - **True duplicate cues** (Gate B only) — the bilingual SRT is built by timestamp-union: when one language's cue span is longer than the other's and crosses the other's breakpoint, the longer span's text repeats across the cues it spans so each language stays fully readable. That **structural repetition is by design, not a defect** — read the `[biliteral] timestamp-union (...)` log line to confirm the run took the union path before flagging anything. The actual defect to flag is a cue whose text is **verbatim identical** to the previous cue in *both* languages (same ZH **and** same EN), which slips past the union's built-in dedup. Fix those in the bilingual SRT and both ASS files, then re-burn.
 - **Fail loop.** On any defect found, the router fixes every listed defect, then **re-runs the same gate** (fresh subagent, full re-read) — not a spot-check of just the fixed lines. The stage is not done until a full review pass finds zero defects.
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
@@ -192,7 +194,7 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 |---|---|---|
 | Platforms | all (B站 + 小红书 + YouTube + archive) | User said "just for X" |
 | Subtitle language | bilingual (中英) | User asked for single-language |
-| Subtitle placement | bottom-bar (`--bar-px` default 220 on `cook subtitles` / `cook burn`) | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay. Source has tall lower-third content the default 220 bar would clip → raise `--bar-px` |
+| Subtitle placement | bottom-bar (`--bar-px` on `cook subtitles` / `cook burn`; default and knobs in `--help`) | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay. Source has tall lower-third content the default bar would clip → raise `--bar-px` |
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
