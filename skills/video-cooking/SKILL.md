@@ -1,12 +1,12 @@
 ---
 name: video-cooking
-description: Router that chains video-download → video-subtitle → (optional) video-dubbing into one command.
+description: Router that chains video-download → video-subtitle → video-dubbing into one command.
 disable-model-invocation: true
 ---
 
 # video-cooking
 
-A **router**: give it a video URL, it runs `video-download` to fetch the raw video, then runs `video-subtitle` on the result, and optionally runs `video-dubbing` to produce a Chinese-dubbed release. The downstream skills share a directory convention, so no file moving between them — the router hands the path and filename stem from one to the other, then verifies the final shipment.
+A **router**: give it a video URL, it runs `video-download` to fetch the raw video, then runs `video-subtitle` on the result, then runs `video-dubbing` to produce a Chinese-dubbed release. The downstream skills share a directory convention, so no file moving between them — the router hands the path and filename stem from one to the other, then verifies the final shipment.
 
 This skill dispatches and verifies. All real work (downloading, transcribing, translating, burning, dubbing) lives in the skills it calls, executed by the [`cook`](https://github.com/ChHsiching/video-cook) CLI.
 
@@ -22,14 +22,11 @@ Reach for the individual skills instead when:
 
 ## Prerequisites
 
-Both downstream skills must be installed:
+All three downstream skills must be installed:
 
 - `video-download` (`npx skills add ChHsiching/video-download-skill`)
 - `video-subtitle` (`npx skills add ChHsiching/video-subtitle-skill`)
-
-The optional Step 3 (Chinese dub) needs an additional skill:
-
-- `video-dubbing` (`npx skills add ChHsiching/video-dubbing-skill`) — only required if the user wants the Chinese-dubbed release. Skip the install check if Step 0's "Chinese dub?" answer is no.
+- `video-dubbing` (`npx skills add ChHsiching/video-dubbing-skill`) — needed for Step 3 (Chinese dub), which is on by default.
 
 Plus the [`cook`](https://github.com/ChHsiching/video-cook) CLI (`pip install video-cook[all]`), which both downstream skills use as their deterministic executor. If any are missing, stop and tell the user which to install.
 
@@ -50,7 +47,7 @@ Then **probe for the subcommands this run actually needs** — a version number 
 
 For each stage the run will invoke, run its `--help` and read the exit code:
 - Stages 1–2 (download + subtitle): `cook transcribe --help`, `cook subtitles --help`
-- Stage 3 (dub, only if the user asked for Chinese dub): `cook dub synth --help`, `cook dub retime --help`
+- Stage 3 (dub): `cook dub synth --help`, `cook dub retime --help` — unless the dub was declined in Step 0
 
 If any probe fails (exit non-zero, "invalid choice", or "unknown subcommand"), the upgrade didn't take — re-run the `pip install -U`, and if it still fails, surface the actual error to the user (network, permissions, PyPI outage). Only proceed when every probe passes.
 
@@ -69,7 +66,7 @@ The user typed `/video-cooking` because they want to publish. Capture the intent
 - **Which platforms?** Default: **all** (B站 + 小红书 + YouTube + archive). Only ask if you have reason to believe they want a subset (e.g. they said "just for B站").
 - **Subtitle language output?** Default: **bilingual** (中英). Only ask if they want single-language.
 - **Subtitle placement?** Default: **bottom-bar**. Most technical content (IDE/terminal/UI demos, diagrams, dense slides) has on-screen material the subtitles would otherwise cover; bottom-bar pads a black strip below the frame so nothing is obscured. Only switch to **overlay** when the lower frame is genuinely empty (centered talking head, slides with a wide bottom margin) — and even then, bottom-bar is a safe default. **Bar height is adjustable** — surface the `--bar-px` knob (see Defaults table) when confirming placement if the source has tall content in its lower third that the default bar would clip.
-- **Chinese dub?** Default: **no** (the bilingual subtitled release is the primary product). Set to **yes** only if the user said "连中配一起做" / "with Chinese dub" / "也做中配版本" — this triggers the optional Step 3 (`video-dubbing`), which clones the original speaker's voice and produces a second release with Chinese voiceover. Default-off because Step 3 is slow on CPU (hours for a 30-min video) and not always wanted.
+- **Chinese dub?** **Always ask.** Default: **yes** — the Chinese-dubbed release is a standard part of the shipment (alongside the bilingual subtitled release). Surface the cost in the question: Step 3 takes ~10 hrs on CPU (runs overnight), so the user should choose knowingly. Record the answer — every downstream reference to "the dub decision" points here.
 - **Output paths?** Default: derive from source metadata (`<cwd>/<author>/<video-name>/`, `<name>` = `<video-name>`). Confirm with the user before download starts — these set the filename stem for every downstream artifact. **Confirm once here; do not re-ask downstream** — both `video-download` and `video-subtitle` would otherwise ask again.
 
 Record the answers. Pass them to Step 2.
@@ -110,9 +107,9 @@ Done when `video-subtitle` reports done **and** `cook verify-shipment <output-ro
 
 **Gate B — full-cue review of the burned bilingual video.** After the bilingual cooked video is burned and `cook verify-shipment` exits 0, spawn a **fresh subagent** to run a full-cue review against the burned bilingual subtitles (every cue, both languages). See [Full-cue review gates](#full-cue-review-gates). Step 2 is not done until Gate B clears.
 
-### Step 3 — Invoke `video-dubbing` (optional, produces the Chinese-dubbed release)
+### Step 3 — Invoke `video-dubbing` (produces the Chinese-dubbed release)
 
-**Skip this step unless the Step 0 "Chinese dub?" answer was yes.** The bilingual subtitled release from Step 2 is the primary product; the Chinese dub is an additive bonus.
+**Runs unless the dub was declined in Step 0.** The Chinese-dubbed release is part of the default shipment.
 
 Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
@@ -144,7 +141,7 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 **Gate C — full-cue review of the burned dubbed video.** After the dub burn completes, spawn a **fresh subagent** to run a full-cue review against the burned Chinese subtitles on `cooked/<name>.dubbed.mp4`. See [Full-cue review gates](#full-cue-review-gates). Step 3 is not done until Gate C clears.
 
-Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end **and Gate C clears**. This is an additive stage — if it fails, the Step 2 shipment is still complete and publishable.
+Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end **and Gate C clears**. On failure, try to recover — the dub is part of the default shipment. The Step 2 bilingual release ships regardless.
 
 ## Full-cue review gates
 
@@ -176,7 +173,7 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (optional Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
+| Dub (Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
 **Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/retime) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
 
@@ -198,6 +195,6 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
-| Chinese dub | off | User said "连中配一起做" / "with Chinese dub" → run Step 3 |
+| Chinese dub | on (always ask) | See Step 0 — surface the ~10hr cost, let the user decline. |
 
 The path confirmation is the only one that's not optional — it sets the `<name>` stem that every downstream file inherits. Everything else has a working default; let the user override only if they speak up.
