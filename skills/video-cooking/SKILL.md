@@ -131,7 +131,7 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 1. **separate** (`cook dub separate`) — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment.
 2. **extract_reference** (agent-owned) — runs the dubbing skill's `extract_reference.py` against the separated vocals to pull a voice-cloning reference clip. Not a `cook dub` command.
-3. **translate** (agent-owned) — produce the dub translation file (`<name>.translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
+3. **translate** (agent-owned) — produce the dub translation file (`transcript/translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
 4. **synth** (`cook dub synth`) — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice.
 5. **timeline** (`cook dub timeline`) — builds a string-of-pearls timeline placing each synthesized cue back-to-back.
 6. **retime** (`cook dub retime`) — re-times the video to the new audio timeline. **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
