@@ -161,6 +161,18 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
 
+## Execution discipline
+
+These bind every stage. Each one was paid for in a real incident — none are optional.
+
+- **Judge success by evidence, never by exit code.** `cook ... | tail` makes the pipeline's exit code `tail`'s (always 0) — failures have shipped looking like successes. The completion signal is the JSON `ok` field in cook's output, the stage's `done_marker` in its log, or the artifact itself (`ffprobe` the file). cook also prints a final status line on failure; that line, not the exit code, is the verdict.
+- **Sample before batch.** Any operation applied to N files (atempo factors, renames, regex edits) runs on 2-3 samples first, with the result printed and direction/numerics verified — a batch run with an inverted formula once processed 17 files backwards before anyone noticed.
+- **Homegrown tools ship with assertions.** Scripts written during a run (timeline adjusters, merge planners) must assert their invariants on real data (tiling, monotonicity, no-overlap) and refuse on violation. A tool without assertions is a tool that fails silently downstream.
+- **Destructive batches get a manifest first.** Deleting or overwriting more than a couple of files requires a list ("these N files, because X") shown to the user for a nod. Cache clears are the classic case: one 0.1s tolerance once deleted 12 healthy segments alongside the 1 stale one.
+- **Restate ambiguous instructions.** When the user's direction could mean two things ("adjust the short sentences" — the audio? the video?), say the interpretation back in one sentence before acting. One misread cost a full debug loop once.
+- **Long tasks get a watcher and a scheduled reporter.** Whenever a stage runs longer than ~30 min (transcribe, dub synth/retime, burn), attach monitoring (the stage's log + product counts) AND create a scheduled in-session report every 30 minutes (progress, measured ETA from the log, anomalies) that tears down on completion. If the session restarts, re-attach both per this skill's recovery flow — the process survives (Windows doesn't kill orphaned children) but the watcher and reporter do not.
+- **Quote dub time by cue count.** `cues × ~3.5 min + retime 1.5-5h`, never by video length — see the Time budget row below.
+
 ## Time budget
 
 The pipeline is long. Set expectations with the user, and use the wait productively.
@@ -173,7 +185,7 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
+| Dub (Step 3) | **cues × ~3.5 min + retime 1.5-5h** | Per-CUE cost, not per video-minute: 240 cues ≈ 14h synth; 141 cues ≈ 8h. Retime scales with interpolated (slowed) segment count. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
 **Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/retime) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
 
