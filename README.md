@@ -45,9 +45,9 @@ The two downstream skills share a directory convention, so `video-cooking` hands
 
 2. **Independent verification gates.** Each step's Done criterion includes a `cook verify-shipment` check at the router level, not just trust in the downstream's self-report. The final gate checks every file in the shipment exists and durations cross-check. This is what catches the "agent feels done but cover.jpg is missing" failure mode.
 
-3. **Time budget and parallelism.** The router documents the end-to-end wall-clock expectation (~90–145 min on CPU) and the parallelism opportunities (transcription and burning run detached; agent can author upload.md and README during the waits).
+3. **Time budget and parallelism.** The router documents the end-to-end wall-clock expectation (~90–145 min on CPU, dub runs overnight per the cue-count formula) and the parallelism opportunities (long stages run foreground by default under your task manager; agent can author upload.md and README during the waits).
 
-4. **Defaults that don't over-ask.** Platforms default to "all", language defaults to bilingual, placement defaults to overlay, model defaults to large-v3. Only the output path confirmation is mandatory (it sets the stem for everything). The router only interrupts when there's a real reason to deviate.
+4. **Defaults that don't over-ask.** Platforms default to "all", language defaults to bilingual, placement defaults to bottom-bar, model defaults to large-v3. Only the output path confirmation is mandatory (it sets the stem for everything). The router only interrupts when there's a real reason to deviate.
 
 ## Requirements
 

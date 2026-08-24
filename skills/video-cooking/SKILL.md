@@ -66,7 +66,7 @@ The user typed `/video-cooking` because they want to publish. Capture the intent
 - **Which platforms?** Default: **all** (B站 + 小红书 + YouTube + archive). Only ask if you have reason to believe they want a subset (e.g. they said "just for B站").
 - **Subtitle language output?** Default: **bilingual** (中英). Only ask if they want single-language.
 - **Subtitle placement?** Default: **bottom-bar**. Most technical content (IDE/terminal/UI demos, diagrams, dense slides) has on-screen material the subtitles would otherwise cover; bottom-bar pads a black strip below the frame so nothing is obscured. Only switch to **overlay** when the lower frame is genuinely empty (centered talking head, slides with a wide bottom margin) — and even then, bottom-bar is a safe default. **Bar height is adjustable** — surface the `--bar-px` knob (see Defaults table) when confirming placement if the source has tall content in its lower third that the default bar would clip.
-- **Chinese dub?** **Always ask.** Default: **yes** — the Chinese-dubbed release is a standard part of the shipment (alongside the bilingual subtitled release). Surface the cost in the question: Step 3 takes ~10 hrs on CPU (runs overnight), so the user should choose knowingly. Record the answer — every downstream reference to "the dub decision" points here.
+- **Chinese dub?** **Always ask.** Default: **yes** — the Chinese-dubbed release is a standard part of the shipment (alongside the bilingual subtitled release). Surface the cost in the question with the per-cue formula (see Time budget): typically overnight. Record the answer — every downstream reference to "the dub decision" points here.
 - **Output paths?** Default: derive from source metadata (`<cwd>/<author>/<video-name>/`, `<name>` = `<video-name>`). Confirm with the user before download starts — these set the filename stem for every downstream artifact. **Confirm once here; do not re-ask downstream** — both `video-download` and `video-subtitle` would otherwise ask again.
 
 Record the answers. Pass them to Step 2.
@@ -131,7 +131,7 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 1. **separate** (`cook dub separate`) — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment.
 2. **extract_reference** (agent-owned) — runs the dubbing skill's `extract_reference.py` against the separated vocals to pull a voice-cloning reference clip. Not a `cook dub` command.
-3. **translate** (agent-owned) — produce the dub translation file (`<name>.translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
+3. **translate** (agent-owned) — produce the dub translation file (`transcript/translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
 4. **synth** (`cook dub synth`) — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice.
 5. **timeline** (`cook dub timeline`) — builds a string-of-pearls timeline placing each synthesized cue back-to-back.
 6. **retime** (`cook dub retime`) — re-times the video to the new audio timeline. **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
@@ -161,6 +161,18 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
 
+## Execution discipline
+
+These bind every stage, no exceptions.
+
+- **Judge success by evidence, never by exit code.** `cook ... | tail` makes the pipeline's exit code `tail`'s (always 0) — failures have shipped looking like successes. The completion signal is the JSON `ok` field in cook's output, the stage's `done_marker` in its log, or the artifact itself (`ffprobe` the file). cook also prints a final status line on failure; that line, not the exit code, is the verdict.
+- **Sample before batch.** Any operation applied to N files (atempo factors, renames, regex edits) runs on 2-3 samples first, with the result printed and direction/numerics verified before the batch runs.
+- **Homegrown tools ship with assertions.** Scripts written during a run (timeline adjusters, merge planners) must assert their invariants on real data (tiling, monotonicity, no-overlap) and refuse on violation — otherwise they fail silently downstream.
+- **Destructive batches get a manifest first.** Deleting or overwriting more than a couple of files requires a list ("these N files, because X") shown to the user for a nod.
+- **Restate ambiguous instructions.** When the user's direction could mean two things ("adjust the short sentences" — the audio? the video?), say the interpretation back in one sentence before acting.
+- **Long tasks get a watcher and a scheduled reporter.** Whenever a stage runs longer than ~30 min (transcribe, dub synth/retime, burn), attach monitoring (the stage's log + product counts) AND create a scheduled in-session report every 30 minutes (progress, measured ETA from the log, anomalies) that tears down on completion. If the session restarts, re-attach both: find the stage's log under the per-video dir, count the products (e.g. `sent_*.wav` vs cue count, `_vsegs` vs timeline length) to locate the resume point, and re-create the 30-minute reporter — the cook process itself survives the restart (Windows doesn't kill orphaned children); the watcher and reporter do not.
+- **Quote dub time by cue count** (formula lives in the Time budget row below), never by video length.
+
 ## Time budget
 
 The pipeline is long. Set expectations with the user, and use the wait productively.
@@ -173,7 +185,7 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (Step 3) | ~10 hrs on CPU | IndexTTS2 synthesis ~7h (single-thread constraint) + minterpolate re-timing ~3h. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
+| Dub (Step 3) | **cues × ~3.5 min + retime 1.5-5h** | Per-CUE cost, not per video-minute: 240 cues ≈ 14h synth; 141 cues ≈ 8h. Retime scales with interpolated (slowed) segment count. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
 **Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/retime) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
 
@@ -195,6 +207,6 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
-| Chinese dub | on (always ask) | See Step 0 — surface the ~10hr cost, let the user decline. |
+| Chinese dub | on (always ask) | See Step 0 — surface the per-cue cost formula (Time budget), let the user decline. |
 
 The path confirmation is the only one that's not optional — it sets the `<name>` stem that every downstream file inherits. Everything else has a working default; let the user override only if they speak up.
