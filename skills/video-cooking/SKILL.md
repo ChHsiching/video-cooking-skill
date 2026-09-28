@@ -47,7 +47,7 @@ Then **probe for the subcommands this run actually needs** — a version number 
 
 For each stage the run will invoke, run its `--help` and read the exit code:
 - Stages 1–2 (download + subtitle): `cook transcribe --help`, `cook subtitles --help`
-- Stage 3 (dub): `cook dub synth --help`, `cook dub retime --help` — unless the dub was declined in Step 0
+- Stage 3 (dub): `cook dub synth --help`, `cook dub assemble --help` — unless the dub was declined in Step 0
 
 If any probe fails (exit non-zero, "invalid choice", or "unknown subcommand"), the upgrade didn't take — re-run the `pip install -U`, and if it still fails, surface the actual error to the user (network, permissions, PyPI outage). Only proceed when every probe passes.
 
@@ -95,7 +95,7 @@ If `cook download` fails (auth wall it couldn't crack, network, etc.), stop and 
 
 Pass the `<output-root>` and `<name>` from Step 1, **plus the publish intent from Step 0**. Tell `video-subtitle` explicitly:
 
-> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment: cooked mp4, upload.md with per-platform titles/descriptions/chapters, cloud-srt/ for soft-sub platforms, cooked/cover.jpg. Don't skip cloud-srt or cover — the user is going to upload. The source context at `raw/<name>.source.json` (run `cook show-source` to surface it) has the author, links, and source description — use it for translation context and upload metadata, don't just rely on the transcript."
+> "This run is for upload to `<platforms from Step 0>`. Produce the full shipment: cooked mp4, upload.md with per-platform titles/descriptions/chapters, cloud-srt/ for soft-sub platforms, cooked/cover.jpg. Don't skip cloud-srt or cover — the user is going to upload. The source context at `raw/<name>.source.json` (run `cook show-source` to surface it) has the author, links, and source description — use it for translation context and upload metadata, don't just rely on the transcript. If the Chinese dub will run (Step 3), also produce `transcript/<name>.en.full.srt` via `scripts/make_full_srt.py` — dubbing needs full sentences, not subtitle fragments."
 
 Without this, `video-subtitle` might treat cloud-srt/ as lazy, forget cover.jpg, or translate purely from the transcript and miss the author/links/description the source platform already provided. The intent handoff is what makes the router produce a publish-ready shipment every time.
 
@@ -109,7 +109,7 @@ Done when `video-subtitle` reports done **and** `cook verify-shipment <output-ro
 
 ### Step 3 — Invoke `video-dubbing` (produces the Chinese-dubbed release)
 
-**Runs unless the dub was declined in Step 0.** The Chinese-dubbed release is part of the default shipment.
+**Runs unless the dub was declined in Step 0.**
 
 Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
@@ -117,31 +117,21 @@ Pass `<output-root>` and `<name>`. Tell `video-dubbing`:
 
 `video-dubbing` reads `raw/<name>.raw.mp4` (original audio, for Demucs separation + voice cloning reference) and `transcript/<name>.en.full.srt` (the full-sentence English transcript — produce it in Step 2 via `scripts/make_full_srt.py`; dubbing needs complete sentences not subtitle fragments), and writes its outputs to a new `dubbed/` stage folder plus `cooked/<name>.dubbed.mp4`. It does not modify anything `video-subtitle` produced.
 
-**The `--python` flag is mandatory when IndexTTS2 lives in a separate venv** (the common case — its heavy deps like torch are isolated from cook's own Python). cook runs each dub stage as a subprocess under that interpreter, so `from indextts import ...` resolves. Resolve the venv once (default `~/Git/index-tts/.venv`) and pass it to every dub command:
+**The `--python` flag is mandatory when IndexTTS2 lives in a separate venv** (the common case — its heavy deps like torch are isolated from cook's own Python). Every `cook dub` command takes it; resolving the venv is video-dubbing's Step 0.
 
-```
-<venv>/Scripts/cook dub separate <root> <name> --python <indextts-venv>/Scripts/python.exe
-<venv>/Scripts/cook dub synth    <root> <name> --python <indextts-venv>/Scripts/python.exe
-...
-# or all four stages at once:
-<venv>/Scripts/cook dub full <root> <name> --python <indextts-venv>/Scripts/python.exe
-```
-
-**Dub pipeline stage order** (run in this sequence). Five are `cook dub` stages run under the IndexTTS2 venv; two are agent-owned steps (`extract_reference` runs a skill script directly, `translate` is pure authoring). For the exact commands and the quality gate on the dub translation, follow `video-dubbing`'s SKILL.md Step 1–3 — it owns those details:
+**Dub pipeline stage order** (run in this sequence). Three are `cook dub` stages run under the IndexTTS2 venv; two are agent-owned steps (`extract_reference` runs a skill script directly, `translate` is pure authoring). For the exact commands and the quality gate on the dub translation, follow `video-dubbing`'s SKILL.md Step 1–3 — it owns those details:
 
 1. **separate** (`cook dub separate`) — Demucs splits `raw/<name>.raw.mp4`'s audio into vocals and accompaniment.
-2. **extract_reference** (agent-owned) — runs the dubbing skill's `extract_reference.py` against the separated vocals to pull a voice-cloning reference clip. Not a `cook dub` command.
-3. **translate** (agent-owned) — produce the dub translation file (`transcript/translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`. This is your work, not cook's. Produce the file before invoking synth. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
+2. **extract_reference** (agent-owned) — pulls a voice-cloning reference clip from the separated vocals (the dubbing skill's Step 2 owns the tool choice — the window scanner or the densest-window picker). Not a `cook dub` command.
+3. **translate** (agent-owned) — produce the dub translation file (`transcript/translations_dub.txt`), one Chinese line per full-sentence English cue from `transcript/<name>.en.full.srt`, written to a char budget. Then generate `<name>.zh.dub.srt` via the dubbing skill's `make_zh_dub_srt.py`.
 4. **synth** (`cook dub synth`) — IndexTTS2 synthesizes the Chinese audio cue by cue against the cloned voice.
-5. **timeline** (`cook dub timeline`) — builds a string-of-pearls timeline placing each synthesized cue back-to-back.
-6. **retime** (`cook dub retime`) — re-times the video to the new audio timeline. **This intentionally changes the dubbed video's length** — Chinese cues rarely match English timing — so a duration mismatch between `raw/<name>.raw.mp4` and `cooked/<name>.dubbed.mp4` is expected and is **not** a verification failure. Do not treat the gap as a defect.
-7. **burn** (`cook dub burn`) — burns bilingual subtitles into the re-timed video and copies the upload subtitles `cloud-srt/zh.dub.srt` + `cloud-srt/en.dub.srt`.
+5. **assemble** (`cook dub assemble`) — assembles the dub on the **identity timeline**: the video is never re-timed, each cue's Chinese audio is atempo'd into its own original window, and the release is burned once. The dubbed video's duration **must** match the raw exactly — a mismatch is a verification failure (the wrong pipeline ran), not an expected variant. It also copies the upload subtitles `cloud-srt/zh.dub.srt` + `cloud-srt/en.dub.srt`.
 
-**Dub subtitles are bilingual, in the same bar layout as the Step 2 release.** The burn in stage 7 runs the same `shorten` → `merge-short` → `biliteral` → `ass` pipeline on the dub's re-timed clock: ZH on top, EN below, same 220px bottom bar. The union's repetition is role-swapped — English repeats across consecutive Chinese-fragment cues (in Step 2 it's the Chinese that repeats), so **English lines staying on screen across several cues are the design, not a defect**; a Gate C flag is a true defect only when the cue's ZH **and** EN are both verbatim repeats of the previous cue (see [Full-cue review gates](#full-cue-review-gates)).
+**Dub subtitles are bilingual, in the same bar layout as the Step 2 release.** The assemble stage runs the same `shorten` → `merge-short` → `biliteral` → `ass` pipeline on the original clock: ZH on top, EN below, the same bottom bar (the bar's pixel height adapts to the frame size). The union's repetition is role-swapped — English repeats across consecutive Chinese-fragment cues (in Step 2 it's the Chinese that repeats), so **English lines staying on screen across several cues are the design, not a defect**; the true-duplicate rule lives in [Full-cue review gates](#full-cue-review-gates).
 
 **Gate C — full-cue review of the burned dubbed video.** After the dub burn completes, spawn a **fresh subagent** to run a full-cue review against the burned bilingual subtitles on `cooked/<name>.dubbed.mp4`. See [Full-cue review gates](#full-cue-review-gates). Step 3 is not done until Gate C clears.
 
-Done when `video-dubbing` reports done **and** `cooked/<name>.dubbed.mp4` exists and plays clean end-to-end **and Gate C clears**. On failure, try to recover — the dub is part of the default shipment. The Step 2 bilingual release ships regardless.
+Done when `cooked/<name>.dubbed.mp4` exists, passes video-dubbing's Step 6 checks, **and Gate C clears**. On failure, try to recover — the Step 2 bilingual release ships regardless.
 
 ## Full-cue review gates
 
@@ -156,7 +146,7 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
   - **Adjacent duplicate lines** (Gate A) — the same cue repeated back-to-back.
   - **ASR errors in proper nouns** — names, places, brands, libraries, commands the transcription got wrong. For every proper noun you cannot confirm from context, web-search it and confirm before passing.
   - **Missing translation lines** (Gates B and C only) — cues with English but no Chinese (Gate B) or no Chinese audio / subtitle (Gate C).
-  - **True duplicate cues** (Gates B and C) — the bilingual SRT is built by timestamp-union: when one language's cue span is longer than the other's and crosses the other's breakpoint, the longer span's text repeats across the cues it spans so each language stays fully readable. That **structural repetition is by design, not a defect** — read the `[biliteral] timestamp-union (...)` log line to confirm the run took the union path before flagging anything. The actual defect to flag is a cue whose text is **verbatim identical** to the previous cue in *both* languages (same ZH **and** same EN), which slips past the union's built-in dedup. Fix those at the source — the bilingual SRT and both ASS files, then re-burn (Gate B); the dub's on-disk subtitle files under `dubbed/_full/` (`dubbing.bilingual.srt` — the burn input — and the merged SRTs, which reach only `cloud-srt/`), then re-run `cook dub burn --keep-subs` (Gate C — a plain burn regenerates the subtitles and wipes those hand edits).
+  - **True duplicate cues** (Gates B and C) — the bilingual SRT is built by timestamp-union: when one language's cue span is longer than the other's and crosses the other's breakpoint, the longer span's text repeats across the cues it spans so each language stays fully readable. That **structural repetition is by design, not a defect** — read the `[biliteral] timestamp-union (...)` log line to confirm the run took the union path before flagging anything. The actual defect to flag is a cue whose text is **verbatim identical** to the previous cue in *both* languages (same ZH **and** same EN), which slips past the union's built-in dedup. Fix those at the source — the bilingual SRT and both ASS files, then re-burn (Gate B); the dub's on-disk subtitle files under `dubbed/_full/` (`dubbing.bilingual.srt` — the burn input — and the merged SRTs, which reach only `cloud-srt/`), then re-run `cook dub assemble --keep-subs` (Gate C — a plain assemble regenerates the subtitles and wipes those hand edits).
 - **Fail loop.** On any defect found, the router fixes every listed defect, then **re-runs the same gate** (fresh subagent, full re-read) — not a spot-check of just the fixed lines. The stage is not done until a full review pass finds zero defects.
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
@@ -170,7 +160,7 @@ These bind every stage, no exceptions.
 - **Homegrown tools ship with assertions.** Scripts written during a run (timeline adjusters, merge planners) must assert their invariants on real data (tiling, monotonicity, no-overlap) and refuse on violation — otherwise they fail silently downstream.
 - **Destructive batches get a manifest first.** Deleting or overwriting more than a couple of files requires a list ("these N files, because X") shown to the user for a nod.
 - **Restate ambiguous instructions.** When the user's direction could mean two things ("adjust the short sentences" — the audio? the video?), say the interpretation back in one sentence before acting.
-- **Long tasks get a watcher and a scheduled reporter.** Whenever a stage runs longer than ~30 min (transcribe, dub synth/retime, burn), attach monitoring (the stage's log + product counts) AND create a scheduled in-session report every 30 minutes (progress, measured ETA from the log, anomalies) that tears down on completion. If the session restarts, re-attach both: find the stage's log under the per-video dir, count the products (e.g. `sent_*.wav` vs cue count, `_vsegs` vs timeline length) to locate the resume point, and re-create the 30-minute reporter — the cook process itself survives the restart (Windows doesn't kill orphaned children); the watcher and reporter do not.
+- **Long tasks get a watcher and a scheduled reporter.** Whenever a stage runs longer than ~30 min (transcribe, dub synth, assemble), attach monitoring (the stage's log + product counts) AND create a scheduled in-session report every 30 minutes (progress, measured ETA from the log, anomalies) that tears down on completion. If the session restarts, re-attach both: find the stage's log under the per-video dir, count the products (e.g. `sent_*.wav` vs cue count) to locate the resume point, and re-create the 30-minute reporter — the cook process itself survives the restart (Windows doesn't kill orphaned children); the watcher and reporter do not.
 - **Quote dub time by cue count** (formula lives in the Time budget row below), never by video length.
 
 ## Time budget
@@ -185,9 +175,9 @@ The pipeline is long. Set expectations with the user, and use the wait productiv
 | Subtitle processing | ~30 sec | cook subtitles runs the full shorten/merge/ass pipeline |
 | Burn | ~10–20 min | ffmpeg re-encode, 1080p, ~6× realtime on CPU |
 | upload.md + README | ~10 min | Agent authoring |
-| Dub (Step 3) | **cues × ~3.5 min + retime 1.5-5h** | Per-CUE cost, not per video-minute: 240 cues ≈ 14h synth; 141 cues ≈ 8h. Retime scales with interpolated (slowed) segment count. **Runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
+| Dub (Step 3) | **cues × ~3.5 min + assemble 0.5-1h** | Per-CUE cost, not per video-minute: 240 cues ≈ 14h synth; 141 cues ≈ 8h. Assemble (fit + encode) adds under an hour. **Synth runs overnight.** GPU doesn't help (IndexTTS2 is CPU-bound by the single-thread constraint). |
 
-**Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/retime) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
+**Long-task execution:** cook runs long tasks (transcribe, burn, dub synth/assemble) in the **foreground by default** — the command blocks until done and returns the exit code. When an outer task manager supervises the process (e.g. zcode's background tasks, or an agent shell), let it own the lifecycle: it tracks the process, notifies on completion, and can stop it. Run these long tasks through that manager rather than passing `--detach`. Reserve `--detach` for when you run cook directly from a terminal and want to reclaim it.
 
 While long tasks run, the agent can:
 - During transcription: pre-read the partial transcript, draft upload.md titles/description
@@ -203,7 +193,7 @@ The pipeline has sensible defaults. Only interrupt the user when you have reason
 |---|---|---|
 | Platforms | all (B站 + 小红书 + YouTube + archive) | User said "just for X" |
 | Subtitle language | bilingual (中英) | User asked for single-language |
-| Subtitle placement | bottom-bar (`--bar-px` on `cook subtitles` / `cook burn`; default and knobs in `--help`) | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay. Source has tall lower-third content the default bar would clip → raise `--bar-px` |
+| Subtitle placement | bottom-bar (`--bar-px` on `cook subtitles` / `cook burn`; default and knobs in `--help`) — ASS coordinate units, equal screen pixels only on a 1080p frame (see video-subtitle Step 4) | Lower frame is genuinely empty (centered talking head, wide-margin slides) → switch to overlay. Source has tall lower-third content the default bar would clip → raise `--bar-px` |
 | Transcription model | large-v3 | Video >60 min → mention medium is 2–3× faster, slightly less accurate |
 | Output paths | derived from source metadata | Always confirm before download (sets the stem for everything) |
 | Quality | best available | User said "1080p is fine" / "skip 4K" → pass `--quality 1080` |
