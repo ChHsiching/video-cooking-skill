@@ -152,6 +152,8 @@ Three points in the pipeline seal human-readable content — the ASR-audited Eng
 
 These are gates (completion criteria), not suggestions. The run does not advance past Gate A, and Step 2 / Step 3 do not declare done, until the corresponding gate has cleared.
 
+**A silent-stretch complaint routes to the coverage audit first.** When the user reports a silent or empty stretch in a subtitled or dubbed release, the first move is `cook dub audit-coverage <output-root> <name>` — no `--python` flag, it runs in cook's own interpreter — diffing what the source audio says against what the transcript covers, not pacing, filling, or background-bed work. Music-masked speech that the transcript never captured dubs to silence no pacing fix can fill (a title-montage gap shipped three rejection rounds before the audit ran); video-dubbing's Step 3 and video-subtitle's Step 2b both carry the audit-and-splice procedure. When the audit finds a gap in an already-burned release, the second move is the repair cascade: splice the missing speech into the transcript, translate the new cues, re-synthesize just those takes, rebuild the affected release, and re-clear Gate B or Gate C before re-shipping.
+
 ## Execution discipline
 
 These bind every stage, no exceptions.
